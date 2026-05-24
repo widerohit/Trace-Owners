@@ -3,73 +3,77 @@ package com.traceowners.git
 import com.traceowners.model.OwnershipTarget
 import com.traceowners.model.RawContribution
 import com.traceowners.model.TargetKind
+import com.traceowners.model.AnalysisMode
+import java.time.Duration
 import java.time.Instant
 import java.time.format.DateTimeParseException
 
 class GitHistoryAnalyzer(private val runner: GitCommandRunner = GitCommandRunner()) {
-    suspend fun analyze(target: OwnershipTarget): List<RawContribution> {
-        val fileContributions = analyzeFileHistory(target)
+    suspend fun analyze(target: OwnershipTarget, mode: AnalysisMode = AnalysisMode.BALANCED): List<RawContribution> {
         if (target.kind == TargetKind.FILE || target.startLine == null || target.endLine == null) {
+            val fileContributions = analyzeFileHistory(target, mode)
             return fileContributions.values.sortedByDescending { it.commitHashes.size }
         }
 
-        val rangeContributions = analyzeLineHistory(target)
+        val rangeContributions = analyzeLineHistory(target, mode)
         if (rangeContributions.isEmpty()) {
+            val fileContributions = analyzeFileHistory(target, mode)
             return fileContributions.values.sortedByDescending { it.commitHashes.size }
-        }
-
-        rangeContributions.values.forEach { ranged ->
-            val fileLevel = fileContributions[identity(ranged.name, ranged.email)]
-            if (fileLevel != null) {
-                ranged.linesAdded = fileLevel.linesAdded
-                ranged.linesDeleted = fileLevel.linesDeleted
-            }
         }
 
         return rangeContributions.values.sortedByDescending { it.commitHashes.size }
     }
 
-    private suspend fun analyzeFileHistory(target: OwnershipTarget): MutableMap<String, RawContribution> {
+    private suspend fun analyzeFileHistory(target: OwnershipTarget, mode: AnalysisMode): MutableMap<String, RawContribution> {
         val output = runner.run(
             workingDirectory = java.io.File(target.repositoryRoot),
             args = listOf(
                 "log",
+                "--max-count=${mode.fileCommitLimit}",
+                "--since=${mode.since}",
                 "--follow",
                 "--numstat",
                 "--date=iso-strict",
                 "--format=--TRACEOWNERS--%H%x09%an%x09%ae%x09%ad",
                 "--",
                 target.relativePath
-            )
+            ),
+            timeout = Duration.ofSeconds(mode.timeoutSeconds)
         )
 
         if (!output.isSuccess) return linkedMapOf()
         return parseNumstatLog(output.stdout)
     }
 
-    private suspend fun analyzeLineHistory(target: OwnershipTarget): MutableMap<String, RawContribution> {
+    private suspend fun analyzeLineHistory(target: OwnershipTarget, mode: AnalysisMode): MutableMap<String, RawContribution> {
+        val contributions = analyzeBlame(target)
+        if (!mode.includeLineHistory || mode.lineCommitLimit <= 0) return contributions
+
         val lineSpec = "${target.startLine},${target.endLine}:${target.relativePath}"
         val output = runner.run(
             workingDirectory = java.io.File(target.repositoryRoot),
             args = listOf(
                 "log",
+                "--max-count=${mode.lineCommitLimit}",
+                "--since=${mode.since}",
                 "-L",
                 lineSpec,
                 "--date=iso-strict",
                 "--format=--TRACEOWNERS--%H%x09%an%x09%ae%x09%ad"
-            )
+            ),
+            timeout = Duration.ofSeconds(mode.timeoutSeconds)
         )
 
-        val contributions = if (output.isSuccess) parseCommitHeaders(output.stdout) else linkedMapOf()
-        val blame = analyzeBlame(target)
-        blame.forEach { (key, blameContribution) ->
+        if (!output.isSuccess) return contributions
+
+        parseCommitHeaders(output.stdout).forEach { (key, historicalContribution) ->
             val contribution = contributions.getOrPut(key) {
-                RawContribution(blameContribution.name, blameContribution.email)
+                RawContribution(historicalContribution.name, historicalContribution.email)
             }
-            contribution.commitHashes.addAll(blameContribution.commitHashes)
-            contribution.activity.addAll(blameContribution.activity)
-            contribution.linesAdded += blameContribution.linesAdded
+            contribution.commitHashes.addAll(historicalContribution.commitHashes)
+            contribution.activity.addAll(historicalContribution.activity)
         }
+
         return contributions
     }
 
@@ -85,7 +89,8 @@ class GitHistoryAnalyzer(private val runner: GitCommandRunner = GitCommandRunner
                 "$startLine,$endLine",
                 "--",
                 target.relativePath
-            )
+            ),
+            timeout = Duration.ofSeconds(10)
         )
 
         if (!output.isSuccess) return linkedMapOf()

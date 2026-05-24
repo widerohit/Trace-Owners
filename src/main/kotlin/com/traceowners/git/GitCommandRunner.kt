@@ -3,6 +3,7 @@ package com.traceowners.git
 import com.intellij.openapi.diagnostic.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.io.IOException
 import java.io.File
 import java.time.Duration
 import java.util.concurrent.TimeUnit
@@ -10,12 +11,21 @@ import java.util.concurrent.TimeUnit
 class GitCommandRunner {
     private val log = Logger.getInstance(GitCommandRunner::class.java)
 
-    suspend fun run(workingDirectory: File, args: List<String>, timeout: Duration = Duration.ofSeconds(30)): GitCommandResult {
+    suspend fun run(workingDirectory: File, args: List<String>, timeout: Duration = Duration.ofSeconds(15)): GitCommandResult {
         return withContext(Dispatchers.IO) {
             val command = listOf("git", "-C", workingDirectory.absolutePath) + args
-            val process = ProcessBuilder(command)
-                .redirectErrorStream(false)
-                .start()
+            val process = try {
+                ProcessBuilder(command)
+                    .redirectErrorStream(false)
+                    .start()
+            } catch (error: IOException) {
+                log.warn("Git command failed to start: ${args.joinToString(" ")}", error)
+                return@withContext GitCommandResult(
+                    exitCode = -1,
+                    stdout = "",
+                    stderr = "Git is not available or could not be started"
+                )
+            }
 
             val finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS)
             if (!finished) {
@@ -41,4 +51,3 @@ data class GitCommandResult(
     val isSuccess: Boolean
         get() = exitCode == 0
 }
-

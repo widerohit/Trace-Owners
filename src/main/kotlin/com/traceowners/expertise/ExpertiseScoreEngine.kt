@@ -2,6 +2,7 @@ package com.traceowners.expertise
 
 import com.traceowners.model.Contributor
 import com.traceowners.model.RawContribution
+import com.traceowners.model.ScoreBreakdown
 import java.time.Duration
 import java.time.Instant
 import kotlin.math.ln
@@ -42,10 +43,19 @@ class ExpertiseScoreEngine {
                 lastActiveDate = lastActive,
                 firstActiveDate = firstActive,
                 activeDays = activeDays,
-                expertiseScore = score.toInt().coerceIn(0, 100)
+                expertiseScore = score.toInt().coerceIn(0, 100),
+                scoreBreakdown = ScoreBreakdown(
+                    commitFrequency = percent(commitScore),
+                    recency = percent(recencyScore),
+                    linesModified = percent(lineScore),
+                    repeatedContributions = percent(recurrenceScore),
+                    longTermOwnership = percent(durationScore)
+                )
             )
         }.sortedWith(compareByDescending<Contributor> { it.expertiseScore }.thenByDescending { it.commits })
     }
+
+    private fun percent(value: Double): Int = (value * 100).toInt().coerceIn(0, 100)
 
     private fun normalizedLog(value: Int, maxValue: Double): Double {
         if (maxValue <= 1.0) return 1.0
@@ -85,4 +95,3 @@ class ExpertiseScoreEngine {
             .size
     }
 }
-

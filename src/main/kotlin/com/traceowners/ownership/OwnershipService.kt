@@ -7,6 +7,8 @@ import com.intellij.openapi.project.Project
 import com.traceowners.cache.AnalysisCache
 import com.traceowners.expertise.ExpertiseScoreEngine
 import com.traceowners.git.GitHistoryAnalyzer
+import com.traceowners.git.GitMetadataProvider
+import com.traceowners.model.AnalysisMode
 import com.traceowners.model.OwnershipAnalysis
 import com.traceowners.model.OwnershipTarget
 import com.traceowners.reviewer.ReviewerEngine
@@ -25,6 +27,7 @@ class OwnershipService(private val project: Project) : Disposable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val listeners = CopyOnWriteArrayList<OwnershipListener>()
     private val analyzer = GitHistoryAnalyzer()
+    private val metadataProvider = GitMetadataProvider()
     private val scorer = ExpertiseScoreEngine()
     private val reviewerEngine = ReviewerEngine()
     private val riskDetector = RiskDetector()
@@ -41,28 +44,30 @@ class OwnershipService(private val project: Project) : Disposable {
         listeners -= listener
     }
 
-    fun analyze(target: OwnershipTarget, refresh: Boolean = false) {
+    fun analyze(target: OwnershipTarget, refresh: Boolean = false, mode: AnalysisMode = AnalysisMode.BALANCED) {
         val cache = project.getService(AnalysisCache::class.java)
         if (!refresh) {
-            val cached = cache.get(target)
+            val cached = cache.get(target, mode)
             if (cached != null) {
                 publish(OwnershipState.Ready(cached, fromCache = true))
                 return
             }
         } else {
-            cache.invalidate(target)
+            cache.invalidate(target, mode)
         }
 
-        publish(OwnershipState.Loading(target))
+        publish(OwnershipState.Loading(target, mode))
         scope.launch {
             try {
                 val analysis = withContext(Dispatchers.Default) {
                     val now = Instant.now()
-                    val raw = analyzer.analyze(target)
+                    val raw = analyzer.analyze(target, mode)
                     val contributors = scorer.score(raw, now)
                     val reviewers = reviewerEngine.suggest(contributors, now)
                     val activeMaintainers = reviewerEngine.activeMaintainers(contributors, now)
                     val risks = riskDetector.detect(contributors, activeMaintainers, now)
+                    val branch = metadataProvider.currentBranch(target)
+                    val codeOwners = metadataProvider.codeOwners(target)
 
                     OwnershipAnalysis(
                         target = target,
@@ -71,6 +76,9 @@ class OwnershipService(private val project: Project) : Disposable {
                         suggestedReviewers = reviewers,
                         activeMaintainers = activeMaintainers,
                         warnings = risks.warnings,
+                        analysisMode = mode,
+                        branchName = branch,
+                        codeOwners = codeOwners,
                         analyzedAt = now
                     )
                 }
@@ -101,7 +109,7 @@ interface OwnershipListener {
 
 sealed class OwnershipState {
     data object Idle : OwnershipState()
-    data class Loading(val target: OwnershipTarget) : OwnershipState()
+    data class Loading(val target: OwnershipTarget, val mode: AnalysisMode) : OwnershipState()
     data class Ready(val analysis: OwnershipAnalysis, val fromCache: Boolean) : OwnershipState()
     data class Error(val target: OwnershipTarget?, val message: String) : OwnershipState()
 }
