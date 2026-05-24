@@ -68,6 +68,7 @@ class OwnershipService(private val project: Project) : Disposable {
                     val risks = riskDetector.detect(contributors, activeMaintainers, now)
                     val branch = metadataProvider.currentBranch(target)
                     val codeOwners = metadataProvider.codeOwners(target)
+                    val recentCommits = analyzer.getRecentCommits(target)
 
                     OwnershipAnalysis(
                         target = target,
@@ -79,6 +80,7 @@ class OwnershipService(private val project: Project) : Disposable {
                         analysisMode = mode,
                         branchName = branch,
                         codeOwners = codeOwners,
+                        recentCommits = recentCommits,
                         analyzedAt = now
                     )
                 }

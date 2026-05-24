@@ -27,14 +27,14 @@
     </extensions>
 
     <actions>
-        <group id="TraceOwners.ContextMenu" text="TraceOwners" popup="true">
-            <action
-                id="TraceOwners.FindExperts"
-                class="com.traceowners.actions.FindExpertsAction"
-                text="Find Experts"
-                description="Analyze Git history and find code owners"/>
+        <action
+            id="TraceOwners.FindExperts"
+            class="com.traceowners.actions.FindExpertsAction"
+            text="TraceOwners"
+            description="Analyze Git history and find code owners">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
-        </group>
+            <keyboard-shortcut keymap="$default" first-keystroke="control alt shift O"/>
+        </action>
     </actions>
 </idea-plugin>

@@ -10,7 +10,7 @@ class TraceOwnersToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
         val panel = TraceOwnersToolWindowPanel(project)
         project.getService(OwnershipService::class.java).addListener(panel)
-        val content = ContentFactory.getInstance().createContent(panel, "Experts", false)
+        val content = ContentFactory.getInstance().createContent(panel, "", false)
         toolWindow.contentManager.addContent(content)
     }
 }

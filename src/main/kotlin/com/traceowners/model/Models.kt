@@ -98,6 +98,14 @@ data class OwnershipWarning(
     val level: RiskLevel
 )
 
+data class GitCommit(
+    val hash: String,
+    val authorName: String,
+    val authorEmail: String,
+    val date: Instant,
+    val message: String
+)
+
 data class OwnershipAnalysis(
     val target: OwnershipTarget,
     val contributors: List<Contributor>,
@@ -108,6 +116,7 @@ data class OwnershipAnalysis(
     val analysisMode: AnalysisMode,
     val branchName: String?,
     val codeOwners: List<CodeOwnerMatch>,
+    val recentCommits: List<GitCommit> = emptyList(),
     val analyzedAt: Instant = Instant.now()
 )
 

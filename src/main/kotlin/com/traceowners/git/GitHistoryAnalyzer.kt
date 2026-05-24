@@ -4,6 +4,7 @@ import com.traceowners.model.OwnershipTarget
 import com.traceowners.model.RawContribution
 import com.traceowners.model.TargetKind
 import com.traceowners.model.AnalysisMode
+import com.traceowners.model.GitCommit
 import java.time.Duration
 import java.time.Instant
 import java.time.format.DateTimeParseException
@@ -197,11 +198,51 @@ class GitHistoryAnalyzer(private val runner: GitCommandRunner = GitCommandRunner
     }
 
     private fun parseInstant(value: String): Instant? {
+        val trimmed = value.trim()
         return try {
-            Instant.parse(value.trim())
+            java.time.OffsetDateTime.parse(trimmed).toInstant()
         } catch (_: DateTimeParseException) {
-            null
+            try {
+                Instant.parse(trimmed)
+            } catch (_: Exception) {
+                null
+            }
         }
+    }
+
+    suspend fun getRecentCommits(target: OwnershipTarget, limit: Int = 10): List<GitCommit> {
+        val output = runner.run(
+            workingDirectory = java.io.File(target.repositoryRoot),
+            args = listOf(
+                "log",
+                "--max-count=$limit",
+                "--format=%H%x09%an%x09%ae%x09%ad%x09%s",
+                "--date=iso-strict",
+                "--",
+                target.relativePath
+            ),
+            timeout = Duration.ofSeconds(5)
+        )
+        if (!output.isSuccess) return emptyList()
+        return parseCommits(output.stdout)
+    }
+
+    private fun parseCommits(text: String): List<GitCommit> {
+        val commits = mutableListOf<GitCommit>()
+        text.lineSequence().forEach { line ->
+            if (line.isNotBlank()) {
+                val parts = line.split('\t')
+                if (parts.size >= 5) {
+                    val hash = parts[0]
+                    val name = parts[1].ifBlank { "Unknown" }
+                    val email = parts[2]
+                    val date = parseInstant(parts[3]) ?: Instant.now()
+                    val message = parts[4]
+                    commits.add(GitCommit(hash, name, email, date, message))
+                }
+            }
+        }
+        return commits
     }
 
     private fun identity(name: String, email: String): String = "${name.lowercase()}<$email>"
