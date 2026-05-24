@@ -1,0 +1,40 @@
+<idea-plugin>
+    <id>com.traceowners.plugin</id>
+    <name>TraceOwners</name>
+    <vendor email="team@traceowners.dev" url="https://traceowners.dev">TraceOwners</vendor>
+
+    <description><![CDATA[
+        Ownership intelligence for enterprise engineering teams. Find code experts, active maintainers,
+        reviewer suggestions, and ownership risks from local Git history.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.java</depends>
+    <depends>org.jetbrains.kotlin</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <projectService serviceImplementation="com.traceowners.ownership.OwnershipService"/>
+        <projectService serviceImplementation="com.traceowners.cache.AnalysisCache"/>
+        <toolWindow
+            id="TraceOwners"
+            anchor="right"
+            factoryClass="com.traceowners.ui.TraceOwnersToolWindowFactory"
+            icon="/icons/traceowners.svg"/>
+    </extensions>
+
+    <extensions defaultExtensionNs="org.jetbrains.kotlin">
+        <supportsKotlinPluginMode supportsK2="true"/>
+    </extensions>
+
+    <actions>
+        <group id="TraceOwners.ContextMenu" text="TraceOwners" popup="true">
+            <action
+                id="TraceOwners.FindExperts"
+                class="com.traceowners.actions.FindExpertsAction"
+                text="Find Experts"
+                description="Analyze Git history and find code owners"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+        </group>
+    </actions>
+</idea-plugin>

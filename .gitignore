@@ -1,0 +1,25 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# IntelliJ IDEA local project state
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Local plugin artifacts
+*.zip
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# JVM crash diagnostics
+hs_err_pid*.log
+replay_pid*.log
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
