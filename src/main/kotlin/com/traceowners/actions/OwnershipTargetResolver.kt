@@ -33,7 +33,7 @@ class OwnershipTargetResolver(
             when (targetElement) {
                 is PsiMethod -> TargetShape(
                     virtualFile = virtualFile,
-                    displayName = "${targetElement.containingClass?.name ?: psiFile?.name}#${targetElement.name}",
+                    displayName = "${targetElement.containingClass?.name ?: psiFile?.name}::${targetElement.name}",
                     kind = TargetKind.METHOD,
                     startLine = editor?.document?.getLineNumber(targetElement.textRange.startOffset)?.plus(1),
                     endLine = editor?.document?.getLineNumber((targetElement.textRange.endOffset - 1).coerceAtLeast(targetElement.textRange.startOffset))?.plus(1)
@@ -47,7 +47,7 @@ class OwnershipTargetResolver(
                 )
                 is KtNamedFunction -> TargetShape(
                     virtualFile = virtualFile,
-                    displayName = "${targetElement.containingKtFile.name}#${targetElement.name ?: "function"}",
+                    displayName = "${targetElement.containingKtFile.name}::${targetElement.name ?: "function"}",
                     kind = TargetKind.METHOD,
                     startLine = editor?.document?.getLineNumber(targetElement.textRange.startOffset)?.plus(1),
                     endLine = editor?.document?.getLineNumber((targetElement.textRange.endOffset - 1).coerceAtLeast(targetElement.textRange.startOffset))?.plus(1)

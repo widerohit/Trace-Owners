@@ -211,16 +211,30 @@ class GitHistoryAnalyzer(private val runner: GitCommandRunner = GitCommandRunner
     }
 
     suspend fun getRecentCommits(target: OwnershipTarget, limit: Int = 10): List<GitCommit> {
-        val output = runner.run(
-            workingDirectory = java.io.File(target.repositoryRoot),
-            args = listOf(
+        val args = if (target.kind != TargetKind.FILE && target.startLine != null && target.endLine != null) {
+            val lineSpec = "${target.startLine},${target.endLine}:${target.relativePath}"
+            listOf(
+                "log",
+                "--max-count=$limit",
+                "-L",
+                lineSpec,
+                "--format=%H%x09%an%x09%ae%x09%ad%x09%s",
+                "--date=iso-strict"
+            )
+        } else {
+            listOf(
                 "log",
                 "--max-count=$limit",
                 "--format=%H%x09%an%x09%ae%x09%ad%x09%s",
                 "--date=iso-strict",
                 "--",
                 target.relativePath
-            ),
+            )
+        }
+
+        val output = runner.run(
+            workingDirectory = java.io.File(target.repositoryRoot),
+            args = args,
             timeout = Duration.ofSeconds(5)
         )
         if (!output.isSuccess) return emptyList()
