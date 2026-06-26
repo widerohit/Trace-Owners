@@ -15,13 +15,12 @@ TraceOwners is not a Git visualization tool. It is a focused, local-first owners
 # Core Workflow
 
 1. Open any supported file in IntelliJ IDEA.
-2. Select a file from the toolbar dropdown.
-3. Optionally select a method/function for deeper ownership analysis.
-4. Choose analysis depth mode:
+2. Select a file from the toolbar dropdown, or right-click and choose **TraceOwners → Find Experts**.
+3. Choose analysis depth mode:
    - Fast
    - Balanced
    - Deep
-5. Review ownership insights in the TraceOwners tool window.
+4. Review ownership insights in the TraceOwners tool window.
 
 ---
 
@@ -29,15 +28,12 @@ TraceOwners is not a Git visualization tool. It is a focused, local-first owners
 
 The top toolbar contains all controls in a single horizontal row:
 
-- Depth Mode Dropdown
-- File Dropdown
-- **Method Dropdown** – shows all methods of the selected class/file, allowing you to view ownership analysis per method.
-- Clear Method Selection Icon
-- Refresh Icon
+- **Depth Mode** – Fast, Balanced, or Deep Git history scan
+- **File Dropdown** – searchable list of open editor tabs
+- **Refresh** – invalidate cache and re-run analysis
 
-When you select a class or file, the Method Dropdown is populated with its methods. Selecting a method updates the analysis view to show contributors specific to that method.
+Selecting a file immediately triggers full file-level ownership analysis.
 
----
 ---
 
 # Depth Mode Analysis
@@ -101,14 +97,14 @@ Selecting a file immediately triggers full file-level ownership analysis.
 
 # File-Level Ownership Analysis
 
-When only a file is selected, TraceOwners performs complete file ownership analysis.
+When a file is selected, TraceOwners performs complete file ownership analysis.
 
 The tool window displays:
 
 - top contributors
 - expertise scores
+- ownership percentage
 - active maintainers
-- recent contributors
 - reviewer suggestions
 - ownership warnings
 - recent commits
@@ -125,64 +121,16 @@ Example ownership warnings:
 
 ---
 
-# Method-Level Ownership Analysis
-
-After selecting a file, the Method Dropdown automatically loads all methods/functions from the selected class or file.
-
-Features:
-
-- searchable dropdown
-- instant filtering
-- method-specific ownership analysis
-- quick switching between methods
-- clear/reset support
-
-Selecting a method switches analysis from file-level ownership to method-level ownership.
-
----
-
-# Method-Level Insights
-
-Method-level analysis provides deeper contributor intelligence for a specific code region.
-
-The tool window shows:
-
-- original method author
-- strongest current owner
-- recent contributors
-- recent commits affecting the method
-- expertise score
-- last modified date
-- reviewer suggestions
-- ownership risks
-- active maintainers
-
-If method selection is cleared, TraceOwners automatically returns to full file-level analysis.
-
----
-
-# Clear Method Selection
-
-A clear/reset icon is available beside the Method Dropdown.
-
-Behavior:
-
-- clears selected method
-- switches analysis back to file-level ownership
-- preserves selected file and depth mode
-
----
-
 # Refresh Analysis
 
-The refresh icon re-runs ownership analysis for the currently selected target.
+The refresh icon re-runs ownership analysis for the currently selected file.
 
 Refresh behavior:
 
 - invalidates current cache
 - re-fetches Git history
 - refreshes ownership calculations
-- preserves current selections
+- preserves current file and depth mode selections
 
 All refresh operations run asynchronously without blocking the IntelliJ UI thread.
 
@@ -211,29 +159,6 @@ For full file ownership analysis:
 ```bash
 git log --max-count=500 --since="2 years ago" --follow --numstat
 ```
-
----
-
-# Method-Level Git Analysis
-
-For method/class/function ownership analysis:
-
-```bash
-git blame --line-porcelain
-```
-
-```bash
-git log --max-count=150 --since="2 years ago" -L
-```
-
-Method-level analysis uses line-range ownership detection to identify:
-
-- original authors
-- strongest maintainers
-- recent contributors
-- reviewer candidates
-
-If range-level analysis finds no contributors, TraceOwners falls back to file-level ownership history.
 
 ---
 
@@ -285,7 +210,6 @@ Performance optimizations include:
 Cache keys include:
 
 - file
-- method
 - depth mode
 
 ---

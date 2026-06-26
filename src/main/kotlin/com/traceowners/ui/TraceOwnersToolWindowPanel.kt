@@ -11,16 +11,13 @@ import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.util.ui.JBFont
 import com.intellij.util.ui.JBUI
-import com.traceowners.actions.ClassMethodTargetResolver
 import com.traceowners.actions.FileOwnershipTargetFactory
 import com.traceowners.model.AnalysisMode
 import com.traceowners.model.Contributor
 import com.traceowners.model.GitCommit
 import com.traceowners.model.OwnershipAnalysis
-import com.traceowners.model.OwnershipTarget
 import com.traceowners.model.RiskLevel
 import com.traceowners.model.ScoreBreakdown
-import com.traceowners.model.TargetKind
 import com.traceowners.ownership.OwnershipListener
 import com.traceowners.ownership.OwnershipService
 import com.traceowners.ownership.OwnershipState
@@ -43,22 +40,14 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val fileTargetFactory = FileOwnershipTargetFactory()
-    private val classMethodResolver = ClassMethodTargetResolver()
     private val search = SearchTextField()
     private val results = JPanel()
     private val modeSelector = JComboBox(AnalysisMode.entries.toTypedArray())
     private val fileSelector = JComboBox<FileOption>()
-    private val methodSelector = JComboBox<MethodOption>()
-    private val clearMethodButton = JButton("✕")
-    private var methodLabelRef: JLabel? = null
     private var currentAnalysis: OwnershipAnalysis? = null
     private val resultCountLabel = JBLabel("")
-    private var classContextTarget: OwnershipTarget? = null
-    private var classContextMethods: List<MethodOption> = emptyList()
     private var allFileOptions: List<FileOption> = emptyList()
-    private var allMethodOptions: List<MethodOption> = emptyList()
     private var suppressFileFilter = false
-    private var suppressMethodFilter = false
     private var suppressModeChange = false
     init {
         border = JBUI.Borders.empty(8)
@@ -66,17 +55,14 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         results.isOpaque = false
 
         add(buildHeader(), BorderLayout.NORTH)
-        // Add results scroll pane and initialize idle view
         add(JBScrollPane(results).also { it.border = JBUI.Borders.empty() }, BorderLayout.CENTER)
         renderIdle()
-        // Initialize method dropdown with placeholder to ensure visibility and space
-        methodSelector.preferredSize = Dimension(150, 26)
-        methodSelector.maximumSize = Dimension(150, 26)
-        methodSelector.isVisible = true
-        methodSelector.model = DefaultComboBoxModel(arrayOf(MethodOption("Whole file", null)))
-        // Ensure UI layout is validated and painted
-        revalidate()
-        repaint()
+
+        search.textEditor.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent) = renderAnalysis()
+            override fun removeUpdate(e: DocumentEvent) = renderAnalysis()
+            override fun changedUpdate(e: DocumentEvent) = renderAnalysis()
+        })
     }
 
     
@@ -108,10 +94,9 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         modeSelector.maximumSize = Dimension(120, 26)
         modeSelector.addActionListener {
             if (!suppressModeChange) {
-                val selectedMethod = (methodSelector.selectedItem as? MethodOption)?.target
-                val target = selectedMethod ?: currentAnalysis?.target
-                if (target != null) {
-                    project.getService(OwnershipService::class.java).analyze(target, refresh = true, mode = selectedMode())
+                currentAnalysis?.target?.let { target ->
+                    project.getService(OwnershipService::class.java)
+                        .analyze(target, refresh = true, mode = selectedMode())
                 }
             }
         }
@@ -128,55 +113,14 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
 
         fileSelector.isEditable = true
         fileSelector.toolTipText = "Select an open editor file to analyze"
-        fileSelector.preferredSize = Dimension(180, 26)
-        fileSelector.maximumSize = Dimension(180, 26)
+        fileSelector.preferredSize = Dimension(220, 26)
+        fileSelector.maximumSize = Dimension(420, 26)
         fileSelector.addActionListener {
-            // Load method dropdown for the selected file
             val option = fileSelector.selectedItem as? FileOption ?: return@addActionListener
             if (option.virtualFile == null) return@addActionListener
-            // Trigger analysis for the selected file
             analyzeFile(option.virtualFile)
-            // Show a placeholder "Whole file" entry while analysis runs
-            methodLabelRef?.isVisible = true
-            methodSelector.isVisible = true
-            methodSelector.model = DefaultComboBoxModel(arrayOf(MethodOption("Whole file", null)))
-            clearMethodButton.isVisible = false
         }
         toolbar.add(fileSelector)
-        toolbar.add(Box.createHorizontalStrut(12))
-
-        // Method: [Label] [Selector] [Clear Button]
-        methodLabelRef = JBLabel("Method:")
-        methodLabelRef?.font = JBFont.small()
-        methodLabelRef?.foreground = JBColor.GRAY
-        methodLabelRef?.preferredSize = Dimension(50, 26)
-        methodLabelRef?.isVisible = true
-        toolbar.add(methodLabelRef)
-        toolbar.add(Box.createHorizontalStrut(4))
-
-        methodSelector.toolTipText = "Select a specific method to analyze its ownership"
-        methodSelector.preferredSize = Dimension(150, 26)
-        methodSelector.maximumSize = Dimension(150, 26)
-        methodSelector.isVisible = true
-        methodSelector.addActionListener {
-            val selected = methodSelector.selectedItem as? MethodOption ?: return@addActionListener
-            val methodTarget = selected.target ?: classContextTarget ?: currentAnalysis?.target
-            if (methodTarget == null || methodTarget == currentAnalysis?.target) return@addActionListener
-            project.getService(OwnershipService::class.java).analyze(methodTarget, mode = selectedMode())
-        }
-        toolbar.add(methodSelector)
-        toolbar.add(Box.createHorizontalStrut(4))
-
-        clearMethodButton.toolTipText = "Clear method selection (analyze entire file)"
-        clearMethodButton.preferredSize = Dimension(26, 26)
-        clearMethodButton.minimumSize = Dimension(26, 26)
-        clearMethodButton.maximumSize = Dimension(26, 26)
-        clearMethodButton.isFocusPainted = false
-        clearMethodButton.isVisible = false
-        clearMethodButton.addActionListener {
-            clearMethodSelection()
-        }
-        toolbar.add(clearMethodButton)
         toolbar.add(Box.createHorizontalStrut(12))
 
         // Refresh button
@@ -187,10 +131,9 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         refreshButton.maximumSize = Dimension(28, 26)
         refreshButton.isFocusPainted = false
         refreshButton.addActionListener {
-            val selectedMethod = (methodSelector.selectedItem as? MethodOption)?.target
-            val target = selectedMethod ?: currentAnalysis?.target
-            if (target != null) {
-                project.getService(OwnershipService::class.java).analyze(target, refresh = true, mode = selectedMode())
+            currentAnalysis?.target?.let { target ->
+                project.getService(OwnershipService::class.java)
+                    .analyze(target, refresh = true, mode = selectedMode())
             }
         }
         toolbar.add(refreshButton)
@@ -200,9 +143,15 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         header.add(Box.createVerticalStrut(8))
 
         configureSearchableFileDropdown()
-        configureSearchableMethodDropdown()
         refreshOpenFilesDropdown()
         setupFileEditorListener()
+
+        search.textEditor.emptyText.text = "Search contributors by name or email\u2026"
+        val searchRow = JPanel(BorderLayout())
+        searchRow.isOpaque = false
+        searchRow.border = JBUI.Borders.emptyTop(4)
+        searchRow.add(search, BorderLayout.CENTER)
+        header.add(searchRow)
 
         // Result count label row
         val countRow = JPanel(FlowLayout(FlowLayout.LEFT, 0, 2))
@@ -261,18 +210,11 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
 
 
     private fun renderIdle() {
-        // Show idle welcome UI
         resultCountLabel.text = ""
         replaceResults {
             add(Box.createVerticalStrut(12))
             add(welcomeCard())
         }
-        // Populate method dropdown with placeholder entry
-        methodSelector.model = DefaultComboBoxModel(arrayOf(MethodOption("Whole file", null)))
-        methodSelector.selectedIndex = 0
-        methodSelector.isVisible = true
-        methodLabelRef?.isVisible = true
-        clearMethodButton.isVisible = false
     }
     private fun welcomeCard(): JComponent {
         val card = roundedCard()
@@ -289,8 +231,8 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         card.add(Box.createVerticalStrut(16))
 
         listOf(
-            "1" to "Place your caret inside a method, class, or open a file",
-            "2" to "Right-click \u2192 TraceOwners \u2192 Find Experts  (Ctrl+Alt+Shift+O)",
+            "1" to "Open a file in the editor",
+            "2" to "Select it from the File dropdown, or right-click \u2192 TraceOwners \u2192 Find Experts",
             "3" to "View experts, reviewers, and ownership risks here"
         ).forEach { (num, text) ->
             card.add(stepRow(num, text))
@@ -298,7 +240,7 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         }
 
         card.add(Box.createVerticalStrut(8))
-        val hint = helperText("\uD83D\uDCA1  Use \u201cCurrent File\u201d above to instantly analyze the active editor tab.")
+        val hint = helperText("\uD83D\uDCA1  Use the File dropdown above to analyze any open editor tab.")
         hint.alignmentX = Component.LEFT_ALIGNMENT
         card.add(hint)
 
@@ -414,11 +356,10 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
 
     private fun renderAnalysis(fromCache: Boolean = false) {
         val analysis = currentAnalysis ?: return
-        // No search filtering – show all contributors regardless of any text input.
-        val contributors = analysis.contributors
         val query = search.text.trim().lowercase()
-
-        syncMethodDropdownContext(analysis)
+        val contributors = analysis.contributors.filter {
+            query.isBlank() || it.name.lowercase().contains(query) || it.email.lowercase().contains(query)
+        }
 
         val total = analysis.contributors.size
         resultCountLabel.text = when {
@@ -427,27 +368,18 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
             else -> "Showing ${contributors.size} of $total"
         }
 
-        val selectedIsMethod = analysis.target.kind == TargetKind.METHOD
         val totalCommits = contributors.sumOf { it.commits }.coerceAtLeast(1)
 
         replaceResults {
             add(Box.createVerticalStrut(4))
 
-            // Target title
-            val targetTitle = copyableText(analysis.target.displayName)
-            targetTitle.font = JBFont.label().deriveFont(Font.BOLD, 13f)
+            val targetTitle = copyableText(analysis.target.displayName, bold = true, size = 13f)
             targetTitle.alignmentX = Component.LEFT_ALIGNMENT
             add(targetTitle)
             add(Box.createVerticalStrut(4))
 
-            // Metadata row
             add(metadataRow(analysis, fromCache))
             add(Box.createVerticalStrut(12))
-
-            if (selectedIsMethod) {
-                add(methodSummaryBlock(contributors, totalCommits))
-                add(Box.createVerticalStrut(12))
-            }
 
             // Warnings (shown prominently at top when present)
             if (analysis.warnings.isNotEmpty()) {
@@ -478,8 +410,7 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
                     val row = JPanel(FlowLayout(FlowLayout.LEFT, 4, 2))
                     row.isOpaque = false
                     row.alignmentX = Component.LEFT_ALIGNMENT
-                    val patLabel = copyableText(match.pattern)
-                    patLabel.font = JBFont.label().deriveFont(Font.ITALIC)
+                    val patLabel = copyableText(match.pattern, italic = true)
                     row.add(patLabel)
                     row.add(JBLabel("\u2192").also { it.foreground = JBColor.GRAY })
                     match.owners.forEach { o -> row.add(tagLabel(o, JBColor(Color(0x4B9EFF), Color(0x4B9EFF)))) }
@@ -510,58 +441,6 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
             }
             add(Box.createVerticalStrut(16))
         }
-    }
-
-    private fun methodSummaryBlock(contributors: List<Contributor>, totalCommits: Int): JComponent {
-        val panel = JPanel(FlowLayout(FlowLayout.LEFT, 8, 2))
-        panel.isOpaque = false
-        panel.alignmentX = Component.LEFT_ALIGNMENT
-        panel.border = JBUI.Borders.empty(0, 0, 0, 0)
-
-        val originalAuthor = contributors
-            .filter { it.firstActiveDate != null }
-            .minByOrNull { it.firstActiveDate!! }
-
-        val recent = contributors
-            .filter { it.lastActiveDate != null }
-            .sortedByDescending { it.lastActiveDate!! }
-            .take(3)
-
-        val originalText = if (originalAuthor == null) {
-            "Original author: unknown"
-        } else {
-            val pct = (originalAuthor.commits.toDouble() * 100.0 / totalCommits.toDouble())
-                .coerceIn(0.0, 100.0)
-            "Original author: ${originalAuthor.name} (${String.format("%.1f%%", pct)})"
-        }
-
-        val recentText = if (recent.isEmpty()) {
-            "Recent contributors: none"
-        } else {
-            val rendered = recent.joinToString(", ") { c ->
-                val pct = (c.commits.toDouble() * 100.0 / totalCommits.toDouble())
-                    .coerceIn(0.0, 100.0)
-                "${c.name} (${String.format("%.1f%%", pct)})"
-            }
-            "Recent contributors: $rendered"
-        }
-
-        val leftCol = JPanel()
-        leftCol.layout = BoxLayout(leftCol, BoxLayout.Y_AXIS)
-        leftCol.isOpaque = false
-        leftCol.alignmentX = Component.LEFT_ALIGNMENT
-
-        val title = JBLabel("Method Summary")
-        title.font = JBFont.small().asBold()
-        title.foreground = JBColor.GRAY
-        title.alignmentX = Component.LEFT_ALIGNMENT
-        leftCol.add(title)
-
-        leftCol.add(helperText(originalText))
-        leftCol.add(helperText(recentText))
-
-        panel.add(leftCol)
-        return panel
     }
 
     // ── Metadata row ─────────────────────────────────────────────────────────────
@@ -649,8 +528,7 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         panel.add(circleBadge(rank.toString(), rankBg, rankFg, 22), c)
 
         c.gridx = 1; c.weightx = 1.0; c.insets = Insets(2, 8, 2, 0)
-        val nameLabel = copyableText(contributor.name)
-        nameLabel.font = JBFont.label().asBold()
+        val nameLabel = copyableText(contributor.name, bold = true)
         panel.add(nameLabel, c)
 
         c.gridx = 2; c.weightx = 0.0; c.insets = Insets(2, 8, 2, 0)
@@ -860,8 +738,7 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         left.isOpaque = false
 
         val msg = if (commit.message.length > 72) commit.message.take(69) + "\u2026" else commit.message
-        val msgLabel = copyableText(msg)
-        msgLabel.font = JBFont.label().asBold()
+        val msgLabel = copyableText(msg, bold = true)
         msgLabel.alignmentX = Component.LEFT_ALIGNMENT
         left.add(msgLabel)
 
@@ -870,8 +747,7 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         left.add(meta)
         panel.add(left, BorderLayout.CENTER)
 
-        val hashLabel = copyableText(commit.hash.take(8))
-        hashLabel.font = Font("Monospaced", Font.PLAIN, JBUI.scale(10))
+        val hashLabel = copyableText(commit.hash.take(8), monospace = true)
         hashLabel.foreground = JBColor.GRAY
         hashLabel.border = JBUI.Borders.empty(2, 6)
         panel.add(hashLabel, BorderLayout.EAST)
@@ -972,17 +848,37 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
     private fun dateText(date: Instant?): String =
         date?.atZone(ZoneId.systemDefault())?.toLocalDate()?.toString() ?: "Unknown"
 
-    private fun helperText(text: String): JComponent {
-        return JBLabel(text).also {
-            it.foreground = JBColor.GRAY
-            it.font = JBFont.small()
-        }
-    }
+    private fun helperText(text: String): JComponent =
+        copyableText(text, small = true, gray = true)
 
-    private fun copyableText(text: String): JComponent {
-        return JBLabel(text).also {
-            it.font = JBFont.label()
-            it.foreground = JBColor.foreground()
+    private fun copyableText(
+        text: String,
+        bold: Boolean = false,
+        italic: Boolean = false,
+        small: Boolean = false,
+        gray: Boolean = false,
+        monospace: Boolean = false,
+        size: Float? = null
+    ): JTextField {
+        return JTextField(text).apply {
+            isEditable = false
+            isOpaque = false
+            border = null
+            background = null
+            columns = text.length.coerceAtLeast(1)
+            font = when {
+                monospace -> Font(Font.MONOSPACED, Font.PLAIN, if (small) JBUI.scale(10) else JBUI.scale(12))
+                bold -> JBFont.label().asBold()
+                italic -> JBFont.label().deriveFont(Font.ITALIC)
+                small -> JBFont.small()
+                else -> JBFont.label()
+            }.let { base ->
+                size?.let { base.deriveFont(it) } ?: base
+            }
+            foreground = when {
+                gray -> JBColor.GRAY
+                else -> JBColor.foreground()
+            }
         }
     }
 
@@ -991,122 +887,6 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         results.block()
         results.revalidate()
         results.repaint()
-    }
-
-    private fun syncMethodDropdownContext(analysis: OwnershipAnalysis) {
-        val kind = analysis.target.kind
-        // Always show the dropdown for CLASS/FILE/METHOD so users can switch methods.
-        if (kind != TargetKind.CLASS && kind != TargetKind.FILE && kind != TargetKind.METHOD) {
-            classContextTarget = null
-            classContextMethods = emptyList()
-            methodSelector.isVisible = false
-            methodLabelRef?.isVisible = false
-            clearMethodButton.isVisible = false
-            methodSelector.model = DefaultComboBoxModel()
-            return
-        }
-
-        // Determine base context (class or file) for listing methods.
-        val contextTarget = when (kind) {
-            TargetKind.CLASS, TargetKind.FILE -> analysis.target
-            TargetKind.METHOD -> {
-                classContextTarget ?: OwnershipTarget(
-                    displayName = java.io.File(analysis.target.filePath).name,
-                    filePath = analysis.target.filePath,
-                    repositoryRoot = analysis.target.repositoryRoot,
-                    relativePath = analysis.target.relativePath,
-                    kind = TargetKind.FILE
-                )
-            }
-        }
-
-        val needsRefreshList = classContextTarget?.filePath != contextTarget.filePath || classContextMethods.isEmpty()
-
-        if (!needsRefreshList) {
-            // If we already have a list, select the current method (if possible).
-            if (kind == TargetKind.METHOD && classContextMethods.isNotEmpty()) {
-                val match = classContextMethods.firstOrNull { it.target?.displayName == analysis.target.displayName }
-                match?.let {
-                    suppressMethodFilter = true
-                    methodSelector.selectedItem = it
-                    suppressMethodFilter = false
-                }
-            }
-            // Ensure dropdown is visible for file/class targets regardless of method count
-            methodSelector.isVisible = true
-            methodLabelRef?.isVisible = true
-            clearMethodButton.isVisible = kind == TargetKind.METHOD
-            // Refresh the UI hierarchy so the dropdown becomes visible immediately
-            methodSelector.parent?.let { it.revalidate(); it.repaint() }
-            methodLabelRef?.parent?.let { it.revalidate(); it.repaint() }// Force UI to update
-            methodSelector.revalidate()
-            methodSelector.repaint()
-            methodLabelRef?.revalidate()
-            methodLabelRef?.repaint()
-            return
-        }
-
-        classContextTarget = contextTarget
-        scope.launch {
-            val methods = classMethodResolver.listMethods(project, contextTarget)
-            withContext(Dispatchers.Main) {
-                val options = mutableListOf<MethodOption>()
-                // Add a placeholder entry regardless of fetched methods
-                options.add(MethodOption("Whole ${if (contextTarget.kind == TargetKind.CLASS) "class" else "file"}", null))
-                // Append actual method options if any
-                options.addAll(methods.map { MethodOption(it.displayName.substringAfter("::", it.displayName), it) })
-                // Ensure at least one option exists
-                if (options.isEmpty()) {
-                    options.add(MethodOption("No methods", null))
-                }
-
-                allMethodOptions = options
-                // Debug: print option count to console
-                println("[TraceOwners] Method dropdown populated with ${options.size} options")
-                classContextMethods = options
-
-                methodSelector.model = DefaultComboBoxModel(options.toTypedArray())
-                // Reset filter suppression after model update
-                suppressMethodFilter = false
-
-                // Default selection: whole file/class, unless we are already on a specific METHOD.
-                methodSelector.selectedItem = if (kind == TargetKind.METHOD) {
-                    options.firstOrNull { it.target?.displayName == analysis.target.displayName } ?: options.firstOrNull()
-                } else {
-                    options.firstOrNull()
-                }
-                // After updating model and visibility, ensure UI refresh
-                // After populating model, make sure dropdown and label are visible and UI refreshed
-                methodSelector.isVisible = true
-                methodLabelRef?.isVisible = true
-                methodSelector.revalidate()
-                methodSelector.repaint()
-                methodLabelRef?.revalidate()
-                methodLabelRef?.repaint()
-                methodSelector.parent?.revalidate()
-                methodSelector.parent?.repaint()
-            }
-        }
-    }
-
-    private fun clearMethodSelection() {
-        // Revert to file-level analysis
-        val fileTarget = classContextTarget ?: currentAnalysis?.target ?: return
-        if (fileTarget.kind == TargetKind.FILE) {
-            // Already at file level
-            methodSelector.selectedIndex = 0
-            suppressMethodFilter = true
-            methodSelector.model = DefaultComboBoxModel(classContextMethods.toTypedArray())
-            methodSelector.selectedIndex = 0
-            suppressMethodFilter = false
-        }
-        // Clear method UI
-        methodSelector.isVisible = false
-        methodLabelRef?.isVisible = false
-        clearMethodButton.isVisible = false
-        
-        // Analyze the file
-        project.getService(OwnershipService::class.java).analyze(fileTarget, mode = selectedMode())
     }
 
     private fun setupFileEditorListener() {
@@ -1174,49 +954,6 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
         }
     }
 
-    private fun configureSearchableMethodDropdown() {
-        methodSelector.isEditable = true
-        val editor = methodSelector.editor.editorComponent as? JTextField
-        editor?.document?.addDocumentListener(object : DocumentListener {
-            override fun insertUpdate(e: DocumentEvent) = applyMethodFilter(editor.text)
-            override fun removeUpdate(e: DocumentEvent) = applyMethodFilter(editor.text)
-            override fun changedUpdate(e: DocumentEvent) = applyMethodFilter(editor.text)
-        })
-        methodSelector.addPopupMenuListener(object : javax.swing.event.PopupMenuListener {
-            override fun popupMenuWillBecomeVisible(e: javax.swing.event.PopupMenuEvent?) {
-                // Always show method selector for class/file/method targets
-                methodSelector.isVisible = true
-                methodLabelRef?.isVisible = true
-            }
-            override fun popupMenuWillBecomeInvisible(e: javax.swing.event.PopupMenuEvent?) {}
-            override fun popupMenuCanceled(e: javax.swing.event.PopupMenuEvent?) {}
-        })
-    }
-
-    private fun applyMethodFilter(text: String) {
-        if (suppressMethodFilter) return
-        val query = text.trim().lowercase()
-        val filtered = if (query.isBlank()) {
-            allMethodOptions
-        } else {
-            allMethodOptions.filter {
-                it.name.lowercase().contains(query)
-            }
-        }
-        javax.swing.SwingUtilities.invokeLater {
-            // Ensure dropdown is visible before updating model
-            methodSelector.isVisible = true
-            methodLabelRef?.isVisible = true
-            // Reset filter suppression before model change
-            suppressMethodFilter = false
-            methodSelector.model = DefaultComboBoxModel(filtered.toTypedArray())
-            if (filtered.isNotEmpty()) {
-                methodSelector.selectedItem = filtered.first()
-            }
-            suppressMethodFilter = false
-        }
-    }
-
     private fun analyzeFile(vFile: VirtualFile) {
         scope.launch {
             val target = fileTargetFactory.create(vFile)
@@ -1243,10 +980,6 @@ class TraceOwnersToolWindowPanel(private val project: Project) :
             insets.set(0, thickness + 8, 0, 0)
             return insets
         }
-    }
-
-    private data class MethodOption(val name: String, val target: OwnershipTarget?) {
-        override fun toString(): String = name
     }
 
     private data class FileOption(
